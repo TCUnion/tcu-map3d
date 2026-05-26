@@ -221,8 +221,8 @@ export function MapComponent({
       </div>
 
       <MapContainer
-        center={[40.8, -73.95]}
-        zoom={13}
+        center={[23.97565, 120.9738819]}
+        zoom={8}
         style={{
           height: "70vh",
           width: "100%",

@@ -20,6 +20,8 @@ import { TopNav } from "@/components/nav/TopNav";
 import { getCookie } from "@/utils/cookie";
 import { Row } from "@/components/flex/Row";
 import instanceFleet from "@/api/axios";
+import { parseGpx } from "@/utils/gpx";
+import { useRouteStore } from "@/state/routeStore";
 
 const IconSize = css({
   width: "14px",
@@ -47,8 +49,14 @@ function App() {
 
   const setCenter = useAreaStore((state) => state.setCenter);
   const appendAreas = useAreaStore((state) => state.appendAreas);
+  const setRoute = useRouteStore((s) => s.setRoute);
+  const clearRoute = useRouteStore((s) => s.clearRoute);
+  const routeName = useRouteStore((s) => s.name);
+  const routePointCount = useRouteStore((s) => s.points.length);
   const setAction = useActionStore((state) => state.setAction);
   const setFleet = useActionStore((state) => state.setFleet);
+  const exportSelected = useActionStore((state) => state.selected);
+  const toggleExportCategory = useActionStore((state) => state.toggleCategory);
 
   const checkIsBig = () => {
     const a = areaData[0].lat - areaData[1].lat;
@@ -119,6 +127,27 @@ function App() {
     setIsNextButtonDisabled(true);
     setBuildings([]);
     setHasFetchedBuildings(false);
+  };
+
+  const handleGpxFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = parseGpx(text);
+      setRoute(parsed.points, parsed.name || file.name);
+      const padLat = (parsed.bbox.north - parsed.bbox.south) * 0.05 || 0.002;
+      const padLng = (parsed.bbox.east - parsed.bbox.west) * 0.05 || 0.002;
+      const bbox = [
+        { lat: parsed.bbox.north + padLat, lng: parsed.bbox.east + padLng },
+        { lat: parsed.bbox.south - padLat, lng: parsed.bbox.west - padLng },
+      ];
+      setAreaData(bbox as any);
+      setCenter(bbox);
+      setBuildings([]);
+      setHasFetchedBuildings(false);
+      setIsNextButtonDisabled(false);
+    } catch (err: any) {
+      alert("GPX parse failed: " + (err?.message || err));
+    }
   };
 
   const requestBuildings = async () => {
@@ -194,6 +223,47 @@ function App() {
             onRemove={handleRemove}
             onDone={handleDone}
           ></MapComponent>
+          <Row gap="0.5rem">
+            <label
+              css={css({
+                cursor: "pointer",
+                padding: "8px 14px",
+                border: "1px solid #ddd",
+                borderRadius: "8px",
+                fontSize: "13px",
+                background: "#fafafa",
+              })}
+            >
+              Upload GPX (Strava)
+              <input
+                type="file"
+                accept=".gpx,application/gpx+xml,application/xml,text/xml"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleGpxFile(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {routePointCount > 0 && (
+              <div css={css({ fontSize: "13px", alignSelf: "center", color: "#444" })}>
+                {routeName || "route"} · {routePointCount} pts
+                <button
+                  onClick={clearRoute}
+                  css={css({
+                    marginLeft: "8px",
+                    border: "none",
+                    background: "transparent",
+                    color: "#c33",
+                    cursor: "pointer",
+                  })}
+                >
+                  clear
+                </button>
+              </div>
+            )}
+          </Row>
         </Column>
       </FullscreenModal>
 
@@ -264,9 +334,46 @@ function App() {
       <Modal isOpen={isExportModal} onClose={() => setIsExportModal(false)}>
         <Column gap="0.5rem">
           <Title>Export</Title>
+          <Description>勾選要匯出的內容</Description>
+          <Column gap="0.25rem">
+            {(
+              [
+                { key: "route", label: "路線" },
+                { key: "buildings", label: "建築物 (含道路)" },
+                { key: "terrain", label: "地形 (等高線)" },
+              ] as const
+            ).map((opt) => (
+              <label
+                key={opt.key}
+                css={css({
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  padding: "4px 0",
+                })}
+              >
+                <input
+                  type="checkbox"
+                  checked={exportSelected[opt.key]}
+                  onChange={() => toggleExportCategory(opt.key)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </Column>
 
           <Row gap="0.5rem">
-            <Button isShow={true} onClick={exportFile}>
+            <Button
+              isShow={true}
+              disabled={
+                !exportSelected.route &&
+                !exportSelected.buildings &&
+                !exportSelected.terrain
+              }
+              onClick={exportFile}
+            >
               GLB Download <Download css={IconSize} />
             </Button>
 

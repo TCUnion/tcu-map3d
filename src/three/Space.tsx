@@ -6,6 +6,9 @@ import * as THREE from "three";
 import { useActionStore } from "@/state/exportStore";
 import { GLTFExporter } from "three/examples/jsm/Addons.js";
 import Car from "./Car";
+import Terrain from "./Terrain";
+import Route from "./Route";
+import { useTerrainStore } from "@/state/terrainStore";
 import instanceFleet from "@/api/axios";
 
 const scale = 51000;
@@ -14,10 +17,12 @@ function Building({
   shape,
   extrudeSettings,
   tags,
+  elevY = 0,
 }: {
   shape: THREE.Shape;
   extrudeSettings: any;
   tags: any;
+  elevY?: number;
 }) {
   const [hovered, setHovered] = useState(false);
   const [clicked, setClicked] = useState(false);
@@ -43,7 +48,8 @@ function Building({
         e.stopPropagation();
       }}
       rotation={[-Math.PI / 2, 0, 0]}
-      userData={{ exportToGLB: true }}
+      position={[0, elevY, 0]}
+      userData={{ exportToGLB: true, exportCategory: "buildings" }}
     >
       <extrudeGeometry args={[shape, extrudeSettings]} />
       <meshStandardMaterial color={hovered || clicked ? "#007bff" : "#9da0a3"} />
@@ -314,6 +320,7 @@ function Building({
 
 function Roads({ area }: { area: any }) {
   const [roads, setRoads] = useState<any[]>([]);
+  const sampler = useTerrainStore((s) => s.sampler);
   if (!area || area.length < 2) return null;
   const refLat = (area[1].lat + area[0].lat) / 2;
   const refLng = (area[1].lng + area[0].lng) / 2;
@@ -349,7 +356,8 @@ function Roads({ area }: { area: any }) {
 
         const points = road.geometry.map((pt: any) => {
           const v = project(pt.lat, pt.lon);
-          return new THREE.Vector3(v.x, 0.1, -v.y);
+          const elev = sampler ? sampler(pt.lat, pt.lon) : 0;
+          return new THREE.Vector3(v.x, elev + 0.1, -v.y);
         });
 
         const lineGeometry: any = new THREE.BufferGeometry().setFromPoints(points);
@@ -359,7 +367,7 @@ function Roads({ area }: { area: any }) {
             points={points}
             color="#34f516"
             lineWidth={1}
-            userData={{ exportToGLB: true }}
+            userData={{ exportToGLB: true, exportCategory: "buildings" }}
           ></Line>
         );
       })}
@@ -399,11 +407,17 @@ export function Export() {
   };
 
   const exportGLB = () => {
+    const selected = useActionStore.getState().selected;
     const exportRoot = new THREE.Group();
     scene.traverse((child) => {
-      if (child.userData?.exportToGLB === true) {
-        exportRoot.add(child.clone(true));
-      }
+      if (child.userData?.exportToGLB !== true) return;
+      const cat = child.userData?.exportCategory as
+        | "route"
+        | "buildings"
+        | "terrain"
+        | undefined;
+      if (cat && !selected[cat]) return;
+      exportRoot.add(child.clone(true));
     });
     const exporter = new GLTFExporter();
     const options = { binary: true, embedImages: true };
@@ -443,6 +457,7 @@ export function Space() {
   const areas = useAreaStore((state) => state.areas);
   const [realCenter, setRealCenter] = useState<any>();
   const center = useAreaStore((state) => state.center);
+  const sampler = useTerrainStore((s) => s.sampler);
   const refLat = (center[1].lat + center[0].lat) / 2;
   const refLng = (center[1].lng + center[0].lng) / 2;
 
@@ -457,6 +472,7 @@ export function Space() {
       shape: THREE.Shape;
       extrudeSettings: any;
       tags: any;
+      elevY: number;
     }> = [];
     areas.forEach((bld: any) => {
       if (!bld.geometry || bld.geometry.length < 3) return;
@@ -473,7 +489,17 @@ export function Space() {
         depth: heightValue,
         bevelEnabled: false,
       };
-      result.push({ shape, extrudeSettings, tags: bld.tags });
+      let elevY = 0;
+      if (sampler) {
+        let sumLat = 0;
+        let sumLng = 0;
+        for (const pt of bld.geometry) {
+          sumLat += pt.lat;
+          sumLng += pt.lng;
+        }
+        elevY = sampler(sumLat / bld.geometry.length, sumLng / bld.geometry.length);
+      }
+      result.push({ shape, extrudeSettings, tags: bld.tags, elevY });
     });
     return result;
   };
@@ -494,10 +520,13 @@ export function Space() {
           shape={item.shape}
           extrudeSettings={item.extrudeSettings}
           tags={item.tags}
+          elevY={item.elevY}
         />
       ))}
 
+      <Terrain area={realCenter} />
       <Roads area={realCenter} />
+      <Route />
       <pointLight position={[-10, -10, -10]} decay={0} intensity={Math.PI} />
       <Car />
       <Export />
